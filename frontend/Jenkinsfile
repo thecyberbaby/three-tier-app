@@ -1,0 +1,62 @@
+pipeline {
+    agent any
+    
+    environment {
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-cred') 
+        // PATH = "/bin:/usr/bin:/usr/local/bin:$PATH"
+    }
+    
+    stages {
+        stage("Git Checkout") {
+            steps {
+                git credentialsId: 'github', url: 'https://github.com/thecyberbaby/three-tier-app.git'
+                echo 'Git Checkout Completed'
+                sh "lsb_release -a"
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                sh "docker build -t thecyberbaby/frontend-dev:$BUILD_NUMBER ./frontend"
+                echo 'Build Image Completed'
+            }
+        }
+        
+                stage('Trivy Scan') {
+            steps {
+                sh 'trivy image --no-progress --severity HIGH,CRITICAL thecyberbaby/frontend-dev:$BUILD_NUMBER'
+            }
+        }
+        
+        stage('Login to Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-cred', usernameVariable: 'DOCKERHUB_CREDENTIALS_USR', passwordVariable: 'DOCKERHUB_CREDENTIALS_PSW')]) {
+                    sh "echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin"
+                    echo 'Login Completed'
+                }
+            }
+        }
+        
+        stage('Push Image to Docker Hub') {
+            steps {
+                sh "docker push thecyberbaby/frontend:$BUILD_NUMBER"
+                echo 'Push Image Completed'
+            }
+        }
+    }
+    
+    post {
+        always {
+            sh 'docker logout'
+            emailext(
+                    subject: "Build Status: ${currentBuild.currentResult}",
+                    body: """
+                        Build Number: ${env.BUILD_NUMBER}
+                        Build Status: ${currentBuild.currentResult}
+                        Build URL: ${env.BUILD_URL}
+                    """,
+                    to: 'sharmanishu.dev@gmail.com'
+                )
+        }
+    }
+}
