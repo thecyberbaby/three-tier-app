@@ -2,53 +2,92 @@ pipeline {
     agent any
     
     environment {
-        DOCKERHUB_CREDENTIALS = credentials('dockerhub-cred') 
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-cred')
         PATH = "/bin:/usr/bin:/usr/local/bin:$PATH"
     }
     
     stages {
-        stage("Git Checkout") {
+        stage('Checkout SCM') {
             steps {
-                git credentialsId: 'github', url: 'https://github.com/thecyberbaby/three-tier-app.git'
-                echo 'Git Checkout Completed'
-                sh "lsb_release -a"
+                script {
+                    retry(3) {
+                        checkout([$class: 'GitSCM', branches: [[name: '*/master']],
+                        doGenerateSubmoduleConfigurations: false,
+                        extensions: [],
+                        userRemoteConfigs: [[credentialsId: 'github', url: 'https://github.com/thecyberbaby/three-tier-app.git']]])
+                    }
+                    echo 'Git Checkout Completed'
+                }
             }
         }
         
         stage('Build Docker Image') {
             steps {
-                sh "docker build -t thecyberbaby/frontend-dev:$BUILD_NUMBER ./frontend"
-                echo 'Build Image Completed'
+                script {
+                    try {
+                        sh 'docker --version' // Check Docker version to ensure it is installed
+                        sh "docker build -t thecyberbaby/frontend-dev:${BUILD_NUMBER} ./frontend"
+                        echo 'Build Image Completed'
+                    } catch (Exception err) {
+                        error "Docker build failed. ${err}"
+                    }
+                }
             }
         }
-        
-                stage('Trivy Scan') {
+                
+        stage('Trivy Scan') {
             steps {
-                sh 'trivy image --no-progress --severity HIGH,CRITICAL thecyberbaby/frontend-dev:$BUILD_NUMBER'
+                script {
+                    try {
+                        sh "trivy --version" // Check Trivy version to ensure it is installed
+                        sh "trivy image --no-progress --severity HIGH,CRITICAL thecyberbaby/frontend-dev:${BUILD_NUMBER}"
+                    } catch (Exception err) {
+                        error "Trivy scan failed. ${err}"
+                    }
+                }
             }
         }
-        
+
         stage('Login to Docker Hub') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-cred', usernameVariable: 'DOCKERHUB_CREDENTIALS_USR', passwordVariable: 'DOCKERHUB_CREDENTIALS_PSW')]) {
-                    sh "echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin"
-                    echo 'Login Completed'
+                script {
+                    try {
+                        withCredentials([usernamePassword(credentialsId: 'dockerhub-cred', usernameVariable: 'DOCKERHUB_CREDENTIALS_USR', passwordVariable: 'DOCKERHUB_CREDENTIALS_PSW')]) {
+                            sh "echo ${DOCKERHUB_CREDENTIALS_PSW} | docker login -u ${DOCKERHUB_CREDENTIALS_USR} --password-stdin"
+                            echo 'Login Completed'
+                        }
+                    } catch (Exception err) {
+                        error "Docker Hub login failed. ${err}"
+                    }
                 }
             }
         }
         
         stage('Push Image to Docker Hub') {
             steps {
-                sh "docker push thecyberbaby/frontend:$BUILD_NUMBER"
-                echo 'Push Image Completed'
+                script {
+                    try {
+                        sh "docker push thecyberbaby/frontend-dev:${BUILD_NUMBER}"
+                        echo 'Push Image Completed'
+                    } catch (Exception err) {
+                        error "Docker push failed. ${err}"
+                    }
+                }
             }
         }
     }
     
     post {
         always {
-            sh 'docker logout'
-            emailext(
+            script {
+                try {
+                    sh 'docker logout'
+                    echo 'Docker logout completed'
+                } catch (Exception err) {
+                    echo "Docker logout failed. ${err}"
+                }
+
+                emailext(
                     subject: "Build Status: ${currentBuild.currentResult}",
                     body: """
                         Build Number: ${env.BUILD_NUMBER}
@@ -57,6 +96,7 @@ pipeline {
                     """,
                     to: 'sharmanishu.dev@gmail.com'
                 )
+            }
         }
     }
 }
