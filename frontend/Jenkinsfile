@@ -11,7 +11,7 @@ pipeline {
             steps {
                 script {
                     retry(3) {
-                        checkout([$class: 'GitSCM', branches: [[name: '*/master']],
+                        checkout([$class: 'GitSCM', branches: [[name: '*/develop']],
                         doGenerateSubmoduleConfigurations: false,
                         extensions: [],
                         userRemoteConfigs: [[credentialsId: 'github', url: 'https://github.com/thecyberbaby/three-tier-app.git']]])
